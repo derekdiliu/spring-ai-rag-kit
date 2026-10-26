@@ -19,7 +19,7 @@ Spring AI 2.0's modular RAG defines the right extension points, but ships few im
 | `DocumentJoiner` | `ConcatenationDocumentJoiner` (sorts by raw score) | `RankFusionDocumentJoiner` (RRF) |
 | `RetrievalAugmentationAdvisor` | accepts **one** retriever | `HybridDocumentRetriever` *is* one retriever wrapping many |
 
-Vector search misses exact tokens — method names, error codes, SKUs, acronyms. Full-text search misses paraphrase. Hybrid retrieval gets both, and RRF merges them using ranks only, so cosine similarities and `ts_rank_cd` scores never need to be put on the same scale.
+Vector search misses exact tokens — method names, error codes, SKUs, acronyms. Full-text search misses paraphrase. Hybrid retrieval gets both, and RRF merges them using ranks only, so cosine similarities and `ts_rank` scores never need to be put on the same scale.
 
 ## What's in it
 
@@ -86,7 +86,7 @@ Java 17+ (virtual threads on 21+) · Spring AI 2.0.x · Spring Boot 4.1.x · Pos
 
 - `initializeSchema()` adds a **stored** generated column, which rewrites the table once. On large tables run it in a maintenance window. Set `useStoredTsvector(false)` to try the retriever with no schema change (sequential scan).
 - The query `tsquery` is built in a fenced one-row subquery (`OFFSET 0`). Without the fence PostgreSQL inlines it and ignores the GIN index — measured at 45 ms vs 0.5 ms on 20k rows.
-- `ts_rank_cd` is not BM25. For true BM25 ranking, the `pg_textsearch` / ParadeDB extensions are on the roadmap as an alternative backend.
+- `ts_rank` is not BM25: it has no inverse document frequency, so common query words weigh as much as rare ones. For true BM25 ranking, the `pg_textsearch` / ParadeDB extensions are on the roadmap as an alternative backend.
 - Chinese text needs a segmentation extension (e.g. `zhparser`) and a matching text search configuration.
 
 ## Build

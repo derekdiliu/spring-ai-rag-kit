@@ -21,7 +21,7 @@ class PgFullTextDocumentRetrieverTests {
 
 		assertThat(sql).contains(", \"public\".\"vector_store\" WHERE")
 			.contains("\"content_tsv\" @@ t.q")
-			.contains("ts_rank_cd(\"content_tsv\", t.q, 32)")
+			.contains("ts_rank(\"content_tsv\", t.q, 1|32)")
 			.contains("'english'::regconfig")
 			.endsWith("ORDER BY ragkit_score DESC LIMIT ?");
 	}
@@ -62,7 +62,7 @@ class PgFullTextDocumentRetrieverTests {
 			.build()
 			.buildSearchSql("\"metadata\"::jsonb @@ '$.lang == \"java\"'::jsonpath");
 
-		assertThat(sql).contains(" AND \"metadata\"::jsonb @@ '$.lang == \"java\"'::jsonpath AND ts_rank_cd(");
+		assertThat(sql).contains(" AND \"metadata\"::jsonb @@ '$.lang == \"java\"'::jsonpath AND ts_rank(");
 		// Bind order: query text (FROM), min score (WHERE), limit (LIMIT).
 		assertThat(sql.indexOf("CAST(? AS text)")).isLessThan(sql.indexOf(">= ?"));
 		assertThat(sql.indexOf(">= ?")).isLessThan(sql.indexOf("LIMIT ?"));

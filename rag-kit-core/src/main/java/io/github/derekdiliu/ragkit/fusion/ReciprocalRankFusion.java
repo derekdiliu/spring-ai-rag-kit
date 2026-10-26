@@ -13,7 +13,7 @@ import org.springframework.util.Assert;
  * <p>
  * Each document scores {@code sum(weight_i / (k + rank_i))} over the lists that contain
  * it, with 1-based ranks. Only ranks are used, so lists whose raw scores live on
- * different scales (cosine similarity vs {@code ts_rank_cd}) can be merged without any
+ * different scales (cosine similarity vs {@code ts_rank}) can be merged without any
  * tuning. Larger {@code k} flattens the advantage of top positions.
  */
 public final class ReciprocalRankFusion extends AbstractRankFusion {
