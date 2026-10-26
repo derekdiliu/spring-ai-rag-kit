@@ -79,7 +79,7 @@ class HybridDocumentRetrieverTests {
 				Thread.currentThread().interrupt();
 				throw new IllegalStateException(ex);
 			}
-			return List.of(doc(Thread.currentThread().getName() + System.nanoTime()));
+			return List.of(doc(String.valueOf(Thread.currentThread().threadId())));
 		};
 		var hybrid = HybridDocumentRetriever.builder().retriever("one", waiting).retriever("two", waiting).build();
 

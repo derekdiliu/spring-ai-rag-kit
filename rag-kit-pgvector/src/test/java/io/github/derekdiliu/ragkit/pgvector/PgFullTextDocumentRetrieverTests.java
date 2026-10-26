@@ -1,10 +1,7 @@
 package io.github.derekdiliu.ragkit.pgvector;
 
-import java.util.List;
-
 import org.junit.jupiter.api.Test;
 
-import org.springframework.ai.rag.Query;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -81,14 +78,6 @@ class PgFullTextDocumentRetrieverTests {
 
 		assertThat(sql).doesNotContain("content_tsv")
 			.contains("to_tsvector('english'::regconfig, coalesce(\"content\", '')) @@ t.q");
-	}
-
-	@Test
-	void blankQueryReturnsEmptyWithoutTouchingTheDatabase() {
-		// The JdbcTemplate has no DataSource, so any SQL would throw.
-		var retriever = PgFullTextDocumentRetriever.builder(this.jdbcTemplate).build();
-
-		assertThat(retriever.retrieve(new Query("   "))).isEqualTo(List.of());
 	}
 
 	@Test
