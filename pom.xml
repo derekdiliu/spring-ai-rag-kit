@@ -24,6 +24,7 @@
         <module>rag-kit-core</module>
         <module>rag-kit-pgvector</module>
         <module>rag-kit-spring-boot-starter</module>
+        <module>rag-kit-eval</module>
     </modules>
 
     <properties>
@@ -64,6 +65,11 @@
             <dependency>
                 <groupId>io.github.derekdiliu</groupId>
                 <artifactId>rag-kit-pgvector</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.derekdiliu</groupId>
+                <artifactId>rag-kit-eval</artifactId>
                 <version>${project.version}</version>
             </dependency>
         </dependencies>

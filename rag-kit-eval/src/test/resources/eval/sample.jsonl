@@ -1,0 +1,3 @@
+{"id": "q1", "query": "How do I reset my password?", "relevant": ["doc-12", "doc-40"]}
+
+{"id": "q2", "query": "Refund after 30 days", "relevant": {"doc-7": 2, "doc-9": 1}}

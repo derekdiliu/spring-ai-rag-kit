@@ -44,6 +44,25 @@ Every fused document carries `ragkit_fusion_score` and `ragkit_source_ranks` (e.
 - Searches the table set by `spring.ai.vectorstore.pgvector.schema-name` / `table-name` unless `ragkit.fulltext.*` overrides it
 - Needs a single (or `@Primary`) `JdbcTemplate`; the hybrid bean also needs a single `PgVectorStore`. If you define the store yourself, declare the `@Bean` method's return type as `PgVectorStore`, not `VectorStore`
 
+**`rag-kit-eval`** — retrieval quality as a test, for any `DocumentRetriever`
+- `Metric.RECALL`, `MRR`, `NDCG`, `HIT_RATE` at any cut-off, defined as in trec_eval / BEIR so numbers are comparable with published results
+- `RetrievalEvaluator` runs a list of `EvalCase`s and returns an `EvalReport`; map documents to your ids with `.documentId(...)` when the store assigns its own or splits documents into chunks
+- `@EvalDataset` injects cases from a JSON Lines file into a JUnit 5 test; a failed threshold lists the worst queries
+
+```java
+@Test
+void retrievalQuality(@EvalDataset("classpath:eval/questions.jsonl") List<EvalCase> cases) {
+    EvalReport report = RetrievalEvaluator.of(hybridRetriever).evaluate(cases);
+    report.assertThat(Metric.RECALL, 5).isAtLeast(0.80);
+    report.assertThat(Metric.MRR, 10).isAtLeast(0.60);
+}
+```
+
+```json
+{"id": "q1", "query": "How do I reset my password?", "relevant": ["doc-12", "doc-40"]}
+{"id": "q2", "query": "Refund after 30 days", "relevant": {"doc-7": 2, "doc-9": 1}}
+```
+
 ## Quick start
 
 ```xml
@@ -102,7 +121,7 @@ Integration tests are skipped automatically when Docker is not available.
 - [x] RRF / weighted fusion, hybrid retriever, fusion joiner
 - [x] PostgreSQL full-text retriever with identifier splitting and shared filters
 - [x] Spring Boot auto-configuration
-- [ ] `rag-kit-eval`: Recall@k, MRR, nDCG, hit rate; JUnit 5 extension for RAG regression tests in CI
+- [x] `rag-kit-eval`: Recall@k, MRR, nDCG, hit rate; JUnit 5 support for RAG regression tests in CI
 - [ ] Rerankers as `DocumentPostProcessor` (Spring AI ships none)
 - [ ] BM25 backend via `pg_textsearch`
 - [ ] Benchmark on BEIR (SciFact, FiQA): vector vs full-text vs hybrid
