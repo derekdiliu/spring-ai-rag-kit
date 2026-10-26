@@ -35,11 +35,17 @@ public class RagKitProperties {
 		 */
 		private boolean initializeSchema = false;
 
-		/** Schema of the vector store table. Defaults to PgVectorStore's. */
-		private String schemaName = "public";
+		/**
+		 * Schema of the vector store table. Defaults to
+		 * spring.ai.vectorstore.pgvector.schema-name, or public.
+		 */
+		private String schemaName;
 
-		/** Vector store table. Defaults to PgVectorStore's. */
-		private String tableName = "vector_store";
+		/**
+		 * Vector store table. Defaults to spring.ai.vectorstore.pgvector.table-name, or
+		 * vector_store.
+		 */
+		private String tableName;
 
 		/** Name of the generated tsvector column. */
 		private String tsvectorColumn = "content_tsv";

@@ -41,6 +41,9 @@ Every fused document carries `ragkit_fusion_score` and `ragkit_source_ranks` (e.
 
 **`rag-kit-spring-boot-starter`** — auto-configures both beans next to Spring AI's pgvector auto-configuration.
 
+- Searches the table set by `spring.ai.vectorstore.pgvector.schema-name` / `table-name` unless `ragkit.fulltext.*` overrides it
+- Needs a single (or `@Primary`) `JdbcTemplate`; the hybrid bean also needs a single `PgVectorStore`. If you define the store yourself, declare the `@Bean` method's return type as `PgVectorStore`, not `VectorStore`
+
 ## Quick start
 
 ```xml
