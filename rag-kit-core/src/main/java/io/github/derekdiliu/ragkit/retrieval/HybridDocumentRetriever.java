@@ -53,7 +53,25 @@ public final class HybridDocumentRetriever implements DocumentRetriever {
 		this.retrievers = List.copyOf(builder.retrievers);
 		this.fusion = builder.fusion;
 		this.topK = builder.topK;
-		this.executor = builder.executor != null ? builder.executor : Executors.newVirtualThreadPerTaskExecutor();
+		this.executor = builder.executor != null ? builder.executor : defaultExecutor();
+	}
+
+	/**
+	 * A virtual thread per task on Java 21+, otherwise a cached pool of daemon threads.
+	 * Looked up reflectively because the baseline is Java 17; on 19 and 20 virtual threads
+	 * are a preview feature and the call throws, which also falls back.
+	 */
+	private static Executor defaultExecutor() {
+		try {
+			return (Executor) Executors.class.getMethod("newVirtualThreadPerTaskExecutor").invoke(null);
+		}
+		catch (ReflectiveOperationException ex) {
+			return Executors.newCachedThreadPool(task -> {
+				Thread thread = new Thread(task, "ragkit-hybrid");
+				thread.setDaemon(true);
+				return thread;
+			});
+		}
 	}
 
 	public static Builder builder() {
@@ -159,8 +177,9 @@ public final class HybridDocumentRetriever implements DocumentRetriever {
 		}
 
 		/**
-		 * Executor for the delegate calls. Defaults to a virtual thread per task, which
-		 * suits the blocking I/O retrievers do.
+		 * Executor for the delegate calls. Defaults to a virtual thread per task on Java
+		 * 21+, which suits the blocking I/O retrievers do, and to a cached pool of daemon
+		 * threads on Java 17-20.
 		 */
 		public Builder executor(Executor executor) {
 			Assert.notNull(executor, "executor must not be null");

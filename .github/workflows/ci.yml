@@ -8,12 +8,16 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 17 is the baseline; 21 exercises the virtual-thread executor.
+        java: ['17', '21']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: ${{ matrix.java }}
           cache: maven
       # Docker is available on ubuntu-latest, so the Testcontainers integration tests run here.
       - run: mvn -B verify

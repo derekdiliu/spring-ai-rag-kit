@@ -80,7 +80,7 @@ var hybrid = HybridDocumentRetriever.builder()
 
 ## Requirements
 
-Java 21 · Spring AI 2.0.x · Spring Boot 4.1.x · PostgreSQL 12+ (generated columns)
+Java 17+ (virtual threads on 21+) · Spring AI 2.0.x · Spring Boot 4.1.x · PostgreSQL 12+ (generated columns)
 
 ## Notes and limits
 

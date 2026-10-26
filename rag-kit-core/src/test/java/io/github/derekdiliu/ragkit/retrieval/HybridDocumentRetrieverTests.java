@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
 import io.github.derekdiliu.ragkit.fusion.FusionMetadata;
 import io.github.derekdiliu.ragkit.fusion.RankFusion;
@@ -70,7 +71,7 @@ class HybridDocumentRetrieverTests {
 	void runsDelegatesConcurrently() {
 		// Each delegate waits for the other to start; sequential execution would time out.
 		var latch = new CountDownLatch(2);
-		DocumentRetriever waiting = q -> {
+		Function<String, DocumentRetriever> waiting = id -> q -> {
 			latch.countDown();
 			try {
 				assertThat(latch.await(5, TimeUnit.SECONDS)).as("other delegate started").isTrue();
@@ -79,11 +80,31 @@ class HybridDocumentRetrieverTests {
 				Thread.currentThread().interrupt();
 				throw new IllegalStateException(ex);
 			}
-			return List.of(doc(String.valueOf(Thread.currentThread().threadId())));
+			return List.of(doc(id));
 		};
-		var hybrid = HybridDocumentRetriever.builder().retriever("one", waiting).retriever("two", waiting).build();
+		var hybrid = HybridDocumentRetriever.builder()
+			.retriever("one", waiting.apply("a"))
+			.retriever("two", waiting.apply("b"))
+			.build();
 
 		assertThat(hybrid.retrieve(new Query("q"))).hasSize(2);
+	}
+
+	@Test
+	void defaultExecutorUsesVirtualThreadsOnJava21AndDaemonThreadsBefore() throws Exception {
+		var ranOn = new AtomicReference<Thread>();
+		var hybrid = HybridDocumentRetriever.builder().retriever("one", q -> {
+			ranOn.set(Thread.currentThread());
+			return List.of();
+		}).retriever("two", returning()).build();
+
+		hybrid.retrieve(new Query("q"));
+
+		assertThat(ranOn.get().isDaemon()).isTrue();
+		if (Runtime.version().feature() >= 21) {
+			// Thread.isVirtual() is not in the Java 17 API.
+			assertThat(Thread.class.getMethod("isVirtual").invoke(ranOn.get())).isEqualTo(true);
+		}
 	}
 
 	@Test
