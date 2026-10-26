@@ -108,4 +108,14 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <!-- Not part of the default build or CI: mvn -Pbenchmark -pl rag-kit-benchmark -am verify -DskipTests -->
+    <profiles>
+        <profile>
+            <id>benchmark</id>
+            <modules>
+                <module>rag-kit-benchmark</module>
+            </modules>
+        </profile>
+    </profiles>
 </project>

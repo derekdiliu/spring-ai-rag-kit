@@ -19,14 +19,14 @@ Spring AI 2.0's modular RAG defines the right extension points, but ships few im
 | `DocumentJoiner` | `ConcatenationDocumentJoiner` (sorts by raw score) | `RankFusionDocumentJoiner` (RRF) |
 | `RetrievalAugmentationAdvisor` | accepts **one** retriever | `HybridDocumentRetriever` *is* one retriever wrapping many |
 
-Vector search misses exact tokens — method names, error codes, SKUs, acronyms. Full-text search misses paraphrase. Hybrid retrieval gets both, and RRF merges them using ranks only, so cosine similarities and `ts_rank` scores never need to be put on the same scale.
+Vector search misses exact tokens — method names, error codes, SKUs, acronyms. Full-text search misses paraphrase. Hybrid retrieval can cover both, and RRF merges them using ranks only, so cosine similarities and `ts_rank` scores never need to be put on the same scale. Whether it helps depends on your data — see the [benchmark](#benchmark), and measure your own with `rag-kit-eval`.
 
 ## What's in it
 
 **`rag-kit-core`** — store-agnostic
 - `RankFusion.rrf()` — Reciprocal Rank Fusion (default `k = 60`), with per-source weights
 - `RankFusion.weightedScore()` — weighted sum of min-max normalised scores
-- `HybridDocumentRetriever` — runs delegates in parallel on virtual threads, fuses, applies `topK`
+- `HybridDocumentRetriever` — runs delegates in parallel (on virtual threads on Java 21+), fuses, applies `topK`
 - `RankFusionDocumentJoiner` — drop-in replacement for `ConcatenationDocumentJoiner` when using query expansion
 
 Every fused document carries `ragkit_fusion_score` and `ragkit_source_ranks` (e.g. `{vector=3, fulltext=1}`) in its metadata, so you can see *why* it ranked where it did.
@@ -97,6 +97,36 @@ var hybrid = HybridDocumentRetriever.builder()
     .build();
 ```
 
+## Benchmark
+
+BEIR test splits, all three retrievers on the same `PgVectorStore` table. Every retriever returns its top 100; hybrid is equal-weight RRF (`k = 60`) over vector and full-text.
+
+| Dataset | Retriever | nDCG@10 | Recall@10 | Recall@100 | MRR@10 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| SciFact | Full-text (`ts_rank`) | 0.597 | 0.742 | 0.862 | 0.556 |
+| SciFact | Vector (all-MiniLM-L6-v2) | 0.624 | 0.774 | 0.923 | 0.578 |
+| SciFact | **Hybrid** (all-MiniLM-L6-v2 + full-text) | **0.678** | **0.797** | **0.939** | **0.644** |
+| SciFact | Vector (text-embedding-3-small) | **0.723** | **0.852** | **0.970** | 0.690 |
+| SciFact | Hybrid (text-embedding-3-small + full-text) | 0.716 | 0.816 | 0.967 | **0.697** |
+| FiQA | Full-text (`ts_rank`) | 0.188 | 0.242 | 0.473 | 0.238 |
+| FiQA | **Vector** (all-MiniLM-L6-v2) | **0.366** | **0.427** | **0.694** | **0.443** |
+| FiQA | Hybrid (all-MiniLM-L6-v2 + full-text) | 0.330 | 0.416 | 0.680 | 0.395 |
+| FiQA | **Vector** (text-embedding-3-small) | **0.449** | **0.524** | **0.775** | **0.520** |
+| FiQA | Hybrid (text-embedding-3-small + full-text) | 0.348 | 0.432 | 0.733 | 0.414 |
+
+What it shows:
+
+- **Hybrid helps when the two retrievers are comparably strong.** On SciFact, full-text (0.597) is close to MiniLM (0.624), and fusing them beats both, and BM25's published 0.665.
+- **It hurts when one is much weaker.** On FiQA, full-text reaches 0.188 against 0.449 for `text-embedding-3-small`, and equal-weight fusion drags the result down to 0.348. Try a lower `ragkit.hybrid.fulltext-weight` (not benchmarked here), or use the vector retriever alone.
+- **PostgreSQL's built-in ranking gets most of the way to BM25.** BEIR reports BM25 at 0.665 (SciFact) and 0.236 (FiQA); `ts_rank` with log-length normalisation reaches 0.597 and 0.188. The cover-density `ts_rank_cd` reached only 0.33 and 0.03 on the same queries, which is why the retriever uses `ts_rank`.
+
+Setup: vector search is exact (no ANN index), so numbers reflect the model, not index recall. MiniLM runs locally through `spring-ai-transformers` with Spring AI's default 128-token truncation. Reproduce with:
+
+```bash
+mvn -Pbenchmark -pl rag-kit-benchmark -am verify -DskipTests \
+    -Dbenchmark.datasets=scifact,fiqa -Dbenchmark.models=minilm,openai   # openai needs OPENAI_API_KEY
+```
+
 ## Requirements
 
 Java 17+ (virtual threads on 21+) · Spring AI 2.0.x · Spring Boot 4.1.x · PostgreSQL 12+ (generated columns)
@@ -124,7 +154,7 @@ Integration tests are skipped automatically when Docker is not available.
 - [x] `rag-kit-eval`: Recall@k, MRR, nDCG, hit rate; JUnit 5 support for RAG regression tests in CI
 - [ ] Rerankers as `DocumentPostProcessor` (Spring AI ships none)
 - [ ] BM25 backend via `pg_textsearch`
-- [ ] Benchmark on BEIR (SciFact, FiQA): vector vs full-text vs hybrid
+- [x] Benchmark on BEIR (SciFact, FiQA): vector vs full-text vs hybrid
 - [ ] Publish to Maven Central
 
 ## License
