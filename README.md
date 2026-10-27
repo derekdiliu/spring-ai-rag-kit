@@ -36,6 +36,7 @@ Every fused document carries `ragkit_fusion_score` and `ragkit_source_ranks` (e.
 - `initializeSchema()` adds a generated, stored `tsvector` column and GIN index — documents ingested through `PgVectorStore.add(...)` are indexed automatically
 - **Identifier splitting**: `RecipeService.createRecipe` is indexed as the whole token *and* as `recipe service create recipe`, so a question mentioning `createRecipe` finds it. PostgreSQL's default parser treats the dotted name as one token and misses it.
 - `ANY_TERMS` mode (default) for natural-language questions; `WEB_SEARCH` mode for `"phrases"`, `or`, `-exclusions`
+- **BM25 ranking** with `ranking(TextRanking.BM25)` (`ragkit.fulltext.ranking: bm25`), through the [`pg_textsearch`](https://github.com/timescale/pg_textsearch) extension: `initializeSchema()` then creates a `bm25` index on the content instead of the column — no table rewrite. Identifier splitting and filters work the same; `ANY_TERMS` mode only
 - Metadata filters via Spring AI's own `PgVectorFilterExpressionConverter`, read from the same `FILTER_EXPRESSION` query-context key as `VectorStoreDocumentRetriever` — one filter applies to both halves of a hybrid search
 - Identifiers validated, user text always bound as a parameter
 
@@ -78,6 +79,7 @@ ragkit:
   fulltext:
     initialize-schema: true      # adds content_tsv + GIN index on startup (off by default)
     text-search-config: english  # or 'simple' for code-heavy / mixed-language content
+    ranking: bm25                # needs pg_textsearch; default ts-rank works on any PostgreSQL
   hybrid:
     top-k: 5
     vector-top-k: 20
@@ -137,13 +139,13 @@ mvn -Pbenchmark -pl rag-kit-benchmark -am verify -DskipTests \
 
 ## Requirements
 
-Java 17+ (virtual threads on 21+) · Spring AI 2.0.x · Spring Boot 4.1.x · PostgreSQL 12+ (generated columns)
+Java 17+ (virtual threads on 21+) · Spring AI 2.0.x · Spring Boot 4.1.x · PostgreSQL 12+ (generated columns); BM25 ranking needs PostgreSQL 17+ with `pg_textsearch` in `shared_preload_libraries`
 
 ## Notes and limits
 
 - `initializeSchema()` adds a **stored** generated column, which rewrites the table once. On large tables run it in a maintenance window. Set `useStoredTsvector(false)` to try the retriever with no schema change (sequential scan).
 - The query `tsquery` is built in a fenced one-row subquery (`OFFSET 0`). Without the fence PostgreSQL inlines it and ignores the GIN index — measured at 45 ms vs 0.5 ms on 20k rows.
-- `ts_rank` is not BM25: it has no inverse document frequency, so common query words weigh as much as rare ones. For true BM25 ranking, the `pg_textsearch` / ParadeDB extensions are on the roadmap as an alternative backend.
+- `ts_rank` is not BM25: it has no inverse document frequency, so common query words weigh as much as rare ones. Use BM25 ranking where you can install `pg_textsearch`.
 - Chinese text needs a segmentation extension (e.g. `zhparser`) and a matching text search configuration.
 
 ## Build
@@ -151,6 +153,8 @@ Java 17+ (virtual threads on 21+) · Spring AI 2.0.x · Spring Boot 4.1.x · Pos
 ```bash
 mvn verify          # unit tests + Testcontainers integration tests (pgvector/pgvector:pg17)
 ```
+
+The BM25 integration tests build an image from `pgvector/pgvector:pg17` and the `pg_textsearch` release package, downloaded from GitHub and checked against a pinned SHA-256.
 
 Integration tests are skipped automatically when Docker is not available.
 
@@ -161,7 +165,7 @@ Integration tests are skipped automatically when Docker is not available.
 - [x] Spring Boot auto-configuration
 - [x] `rag-kit-eval`: Recall@k, MRR, nDCG, hit rate; JUnit 5 support for RAG regression tests in CI
 - [ ] Rerankers as `DocumentPostProcessor` (Spring AI ships none)
-- [ ] BM25 backend via `pg_textsearch`
+- [x] BM25 ranking via `pg_textsearch`
 - [x] Benchmark on BEIR (SciFact, FiQA): vector vs full-text vs hybrid
 - [ ] Publish to Maven Central
 

@@ -161,6 +161,14 @@ class RagKitAutoConfigurationTests {
 	}
 
 	@Test
+	void bm25RankingCanBeSelected() {
+		JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+		this.runner.withBean(JdbcTemplate.class, () -> jdbcTemplate)
+			.withPropertyValues("ragkit.fulltext.ranking=bm25")
+			.run(context -> assertThat(searchSql(context, jdbcTemplate)).contains("to_bm25query("));
+	}
+
+	@Test
 	void noHybridForAVectorStoreThatIsNotPgVectorStore() {
 		this.runner.withBean(JdbcTemplate.class, () -> new JdbcTemplate(mock(DataSource.class)))
 			.withBean(VectorStore.class, () -> mock(VectorStore.class))

@@ -40,8 +40,11 @@ import org.springframework.util.StringUtils;
  * {@code tsvector} on the fly (fine for trying it out; a sequential scan on large tables).
  * <p>
  * Scores are {@code ts_rank(..., 1|32)}: term frequency divided by {@code 1 + log} of
- * the document length, mapped into {@code [0, 1)}. They are not comparable with cosine
- * similarity; fuse with rank-based methods such as RRF.
+ * the document length, mapped into {@code [0, 1)}. With
+ * {@link Builder#ranking(TextRanking) ranking(BM25)} they are BM25 scores from the
+ * {@code pg_textsearch} extension, and {@link #initializeSchema()} creates a {@code bm25}
+ * index instead of the column. Neither is comparable with cosine similarity; fuse with
+ * rank-based methods such as RRF.
  * <p>
  * Metadata filters use {@link PgVectorFilterExpressionConverter}, so they behave exactly
  * like {@code PgVectorStore} filters, and can be supplied per query under
@@ -50,7 +53,7 @@ import org.springframework.util.StringUtils;
  */
 public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 
-	/** Metadata key holding the {@code ts_rank} score of a returned document. */
+	/** Metadata key holding the full-text score of a returned document. */
 	public static final String FULLTEXT_SCORE = "ragkit_fulltext_score";
 
 	private static final Log logger = LogFactory.getLog(PgFullTextDocumentRetriever.class);
@@ -59,6 +62,10 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 
 	private static final Pattern TEXT_SEARCH_CONFIG = Pattern
 		.compile("([A-Za-z_][A-Za-z0-9_]{0,62}\\.)?[A-Za-z_][A-Za-z0-9_]{0,62}");
+
+	private static final Pattern CAMEL_CASE_BOUNDARY = Pattern.compile("([a-z0-9])([A-Z])");
+
+	private static final Pattern IDENTIFIER_SEPARATORS = Pattern.compile("[._/:#-]+");
 
 	private static final String SCORE_COLUMN = "ragkit_score";
 
@@ -82,6 +89,8 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 	private final String textSearchConfig;
 
 	private final TextQueryMode queryMode;
+
+	private final TextRanking ranking;
 
 	private final boolean splitIdentifiers;
 
@@ -109,6 +118,7 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 		this.tsvectorColumn = b.tsvectorColumn;
 		this.textSearchConfig = b.textSearchConfig;
 		this.queryMode = b.queryMode;
+		this.ranking = b.ranking;
 		this.splitIdentifiers = b.splitIdentifiers;
 		this.useStoredTsvector = b.useStoredTsvector;
 		this.topK = b.topK;
@@ -134,11 +144,19 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 
 		String sql = buildSearchSql(filterSql);
 		List<Object> args = new ArrayList<>(3);
-		args.add(query.text());
+		if (this.ranking == TextRanking.BM25) {
+			args.add(this.splitIdentifiers ? splitIdentifiers(query.text()) : query.text());
+			args.add(this.topK);
+		}
+		else {
+			args.add(query.text());
+		}
 		if (this.minScore > 0) {
 			args.add(this.minScore);
 		}
-		args.add(this.topK);
+		if (this.ranking == TextRanking.TS_RANK) {
+			args.add(this.topK);
+		}
 
 		if (logger.isTraceEnabled()) {
 			logger.trace("Full-text search SQL: " + sql);
@@ -147,15 +165,24 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 	}
 
 	/**
-	 * Adds a generated, stored {@code tsvector} column and a GIN index to the table.
-	 * Idempotent. Requires PostgreSQL 12+ and the table to exist already (create the
+	 * Adds a generated, stored {@code tsvector} column and a GIN index to the table, or
+	 * for {@link TextRanking#BM25} the {@code pg_textsearch} extension and a {@code bm25}
+	 * index. Idempotent. Requires the table to exist already (create the
 	 * {@code PgVectorStore} first).
 	 * <p>
 	 * Adding a stored generated column rewrites the table; on a large table run this in a
-	 * maintenance window.
+	 * maintenance window. The BM25 index needs no new column.
 	 */
 	public void initializeSchema() {
 		String table = qualifiedTable();
+		if (this.ranking == TextRanking.BM25) {
+			this.jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS pg_textsearch");
+			this.jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS " + quote(bm25IndexName()) + " ON " + table
+					+ " USING bm25 ((" + documentTextExpression() + ")) WITH (text_config = '" + this.textSearchConfig
+					+ "')");
+			logger.info("BM25 index " + bm25IndexName() + " ready on " + table);
+			return;
+		}
 		this.jdbcTemplate.execute("ALTER TABLE " + table + " ADD COLUMN IF NOT EXISTS " + quote(this.tsvectorColumn)
 				+ " tsvector GENERATED ALWAYS AS (" + documentTsvectorExpression() + ") STORED");
 		this.jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS " + quote(indexName()) + " ON " + table
@@ -165,6 +192,9 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 
 	/** The search SQL, exposed for tests and for logging. */
 	String buildSearchSql(String filterSql) {
+		if (this.ranking == TextRanking.BM25) {
+			return buildBm25SearchSql(filterSql);
+		}
 		String tsvector = this.useStoredTsvector ? quote(this.tsvectorColumn) : documentTsvectorExpression();
 		// ts_rank with log-length normalisation. On BEIR (nDCG@10) it scores 0.60 on SciFact
 		// and 0.19 on FiQA, where ts_rank_cd scores 0.33 and 0.03: cover density degrades
@@ -201,9 +231,47 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 		return sql.toString();
 	}
 
+	/**
+	 * BM25 via pg_textsearch. Its {@code <@>} operator returns the negated score, so the
+	 * index scan yields the best matches first in ascending order. The outer query drops
+	 * rows that match no query term (score 0), which a non-index plan would return.
+	 */
+	private String buildBm25SearchSql(String filterSql) {
+		// The query text is bound as one value, identifier split in Java: an expression
+		// over another relation's column would keep the planner from ordering by the index.
+		String bm25 = documentTextExpression() + " <@> to_bm25query(CAST(? AS text), '" + this.schemaName + "."
+				+ bm25IndexName() + "')";
+		StringBuilder sql = new StringBuilder(512);
+		sql.append("SELECT ragkit_id, ragkit_content, ragkit_metadata, -ragkit_bm25 AS ")
+			.append(SCORE_COLUMN)
+			.append(" FROM (SELECT ")
+			.append(quote(this.idColumn))
+			.append(" AS ragkit_id, ")
+			.append(quote(this.contentColumn))
+			.append(" AS ragkit_content, ")
+			.append(quote(this.metadataColumn))
+			.append(" AS ragkit_metadata, ")
+			.append(bm25)
+			.append(" AS ragkit_bm25 FROM ")
+			.append(qualifiedTable());
+		if (StringUtils.hasText(filterSql)) {
+			sql.append(" WHERE ").append(filterSql);
+		}
+		sql.append(" ORDER BY ragkit_bm25 LIMIT ?) AS ranked WHERE ragkit_bm25 < 0");
+		if (this.minScore > 0) {
+			sql.append(" AND -ragkit_bm25 >= ?");
+		}
+		sql.append(" ORDER BY ragkit_bm25");
+		return sql.toString();
+	}
+
 	private String documentTsvectorExpression() {
-		return "to_tsvector(" + regconfig() + ", " + maybeSplit("coalesce(" + quote(this.contentColumn) + ", '')")
-				+ ")";
+		return "to_tsvector(" + regconfig() + ", " + documentTextExpression() + ")";
+	}
+
+	/** The document text as indexed, identifier split when enabled. */
+	private String documentTextExpression() {
+		return maybeSplit("coalesce(" + quote(this.contentColumn) + ", '')");
 	}
 
 	private String queryTsqueryExpression() {
@@ -230,6 +298,12 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 				+ ", '([a-z0-9])([A-Z])', '\\1 \\2', 'g'), '[._/:#-]+', ' ', 'g'))";
 	}
 
+	/** {@link #maybeSplit} for a query bound as a single value. */
+	static String splitIdentifiers(String text) {
+		String words = CAMEL_CASE_BOUNDARY.matcher(text).replaceAll("$1 $2");
+		return text + " " + IDENTIFIER_SEPARATORS.matcher(words).replaceAll(" ");
+	}
+
 	private String regconfig() {
 		return "'" + this.textSearchConfig + "'::regconfig";
 	}
@@ -239,8 +313,15 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 	}
 
 	private String indexName() {
-		String name = this.tableName + "_" + this.tsvectorColumn + "_gin_idx";
-		return name.length() > 63 ? name.substring(0, 63) : name;
+		return truncate(this.tableName + "_" + this.tsvectorColumn + "_gin_idx");
+	}
+
+	private String bm25IndexName() {
+		return truncate(this.tableName + "_bm25_idx");
+	}
+
+	private static String truncate(String identifier) {
+		return identifier.length() > 63 ? identifier.substring(0, 63) : identifier;
 	}
 
 	private static String quote(String identifier) {
@@ -294,6 +375,8 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 		private String textSearchConfig = "english";
 
 		private TextQueryMode queryMode = TextQueryMode.ANY_TERMS;
+
+		private TextRanking ranking = TextRanking.TS_RANK;
 
 		private boolean splitIdentifiers = true;
 
@@ -367,6 +450,17 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 		}
 
 		/**
+		 * How matches are scored. Defaults to {@link TextRanking#TS_RANK}, which works on
+		 * any PostgreSQL; {@link TextRanking#BM25} needs the {@code pg_textsearch}
+		 * extension.
+		 */
+		public Builder ranking(TextRanking ranking) {
+			Assert.notNull(ranking, "ranking must not be null");
+			this.ranking = ranking;
+			return this;
+		}
+
+		/**
 		 * Whether to split camelCase and dotted/underscored identifiers into words, on
 		 * both the document and query side. Defaults to {@code true}. Must match the
 		 * setting used when the column was created.
@@ -394,9 +488,12 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 			return this;
 		}
 
-		/** Drop matches whose {@code ts_rank} score is below this. Defaults to 0. */
+		/**
+		 * Drop matches scoring below this. Defaults to 0. {@code ts_rank} scores lie in
+		 * {@code [0, 1)}; BM25 scores are unbounded.
+		 */
 		public Builder minScore(double minScore) {
-			Assert.isTrue(minScore >= 0 && minScore < 1, "minScore must be in [0, 1)");
+			Assert.isTrue(minScore >= 0 && Double.isFinite(minScore), "minScore must be a non-negative number");
 			this.minScore = minScore;
 			return this;
 		}
@@ -413,6 +510,12 @@ public final class PgFullTextDocumentRetriever implements DocumentRetriever {
 		}
 
 		public PgFullTextDocumentRetriever build() {
+			if (this.ranking == TextRanking.TS_RANK) {
+				Assert.isTrue(this.minScore < 1, "minScore must be below 1 for ts_rank, whose scores lie in [0, 1)");
+			}
+			else {
+				Assert.isTrue(this.queryMode == TextQueryMode.ANY_TERMS, "BM25 ranking supports the ANY_TERMS query mode only");
+			}
 			return new PgFullTextDocumentRetriever(this);
 		}
 

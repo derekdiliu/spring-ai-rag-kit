@@ -53,6 +53,7 @@ public class RagKitAutoConfiguration {
 			.tsvectorColumn(p.getTsvectorColumn())
 			.textSearchConfig(p.getTextSearchConfig())
 			.queryMode(p.getQueryMode())
+			.ranking(p.getRanking())
 			.splitIdentifiers(p.isSplitIdentifiers())
 			.useStoredTsvector(p.isUseStoredTsvector())
 			.topK(p.getTopK())

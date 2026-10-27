@@ -6,11 +6,12 @@ package io.github.derekdiliu.ragkit.pgvector;
 public enum TextQueryMode {
 
 	/**
-	 * Match documents containing <em>any</em> of the query's terms, ranked by how many and
-	 * how close together they are. Suits natural-language questions, where requiring every
-	 * word (the PostgreSQL default) usually returns nothing. Stop words are dropped and
-	 * terms are stemmed with the configured text search configuration; when identifier
-	 * splitting is on, {@code createRecipe} also yields {@code create} and {@code recipe}.
+	 * Match documents containing <em>any</em> of the query's terms, ranked by how often
+	 * they occur (see {@link TextRanking}). Suits natural-language questions, where
+	 * requiring every word (the PostgreSQL default) usually returns nothing. Stop words are
+	 * dropped and terms are stemmed with the configured text search configuration; when
+	 * identifier splitting is on, {@code createRecipe} also yields {@code create} and
+	 * {@code recipe}.
 	 */
 	ANY_TERMS,
 

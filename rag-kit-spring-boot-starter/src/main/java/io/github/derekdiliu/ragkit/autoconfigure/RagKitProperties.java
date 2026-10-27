@@ -1,6 +1,7 @@
 package io.github.derekdiliu.ragkit.autoconfigure;
 
 import io.github.derekdiliu.ragkit.pgvector.TextQueryMode;
+import io.github.derekdiliu.ragkit.pgvector.TextRanking;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -55,6 +56,12 @@ public class RagKitProperties {
 
 		/** How query text becomes a tsquery. */
 		private TextQueryMode queryMode = TextQueryMode.ANY_TERMS;
+
+		/**
+		 * How matches are scored: ts-rank (any PostgreSQL) or bm25 (needs the
+		 * pg_textsearch extension).
+		 */
+		private TextRanking ranking = TextRanking.TS_RANK;
 
 		/** Split camelCase and dotted identifiers into words. */
 		private boolean splitIdentifiers = true;
@@ -119,6 +126,14 @@ public class RagKitProperties {
 
 		public void setQueryMode(TextQueryMode queryMode) {
 			this.queryMode = queryMode;
+		}
+
+		public TextRanking getRanking() {
+			return this.ranking;
+		}
+
+		public void setRanking(TextRanking ranking) {
+			this.ranking = ranking;
 		}
 
 		public boolean isSplitIdentifiers() {
