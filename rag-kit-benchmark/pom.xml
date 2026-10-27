@@ -27,6 +27,12 @@
             <groupId>io.github.derekdiliu</groupId>
             <artifactId>rag-kit-eval</artifactId>
         </dependency>
+        <!-- PgTextSearchContainers: pgvector plus pg_textsearch for BM25 -->
+        <dependency>
+            <groupId>io.github.derekdiliu</groupId>
+            <artifactId>rag-kit-pgvector</artifactId>
+            <type>test-jar</type>
+        </dependency>
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-transformers</artifactId>

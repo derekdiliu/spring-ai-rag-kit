@@ -101,26 +101,33 @@ var hybrid = HybridDocumentRetriever.builder()
 
 ## Benchmark
 
-BEIR test splits, all three retrievers on the same `PgVectorStore` table. Every retriever returns its top 100; hybrid is equal-weight RRF (`k = 60`) over vector and full-text.
+BEIR test splits, all retrievers on the same `PgVectorStore` table. Every retriever returns its top 100; hybrid is equal-weight RRF (`k = 60`) over vector and full-text.
 
 | Dataset | Retriever | nDCG@10 | Recall@10 | Recall@100 | MRR@10 |
 | --- | --- | ---: | ---: | ---: | ---: |
 | SciFact | Full-text (`ts_rank`) | 0.597 | 0.742 | 0.862 | 0.556 |
+| SciFact | Full-text (BM25) | 0.691 | 0.814 | 0.926 | 0.658 |
 | SciFact | Vector (all-MiniLM-L6-v2) | 0.624 | 0.774 | 0.923 | 0.578 |
-| SciFact | **Hybrid** (all-MiniLM-L6-v2 + full-text) | **0.678** | **0.797** | **0.939** | **0.644** |
-| SciFact | Vector (text-embedding-3-small) | **0.723** | **0.852** | **0.970** | 0.690 |
-| SciFact | Hybrid (text-embedding-3-small + full-text) | 0.716 | 0.816 | 0.967 | **0.697** |
+| SciFact | Hybrid (all-MiniLM-L6-v2 + `ts_rank`) | 0.678 | 0.797 | 0.939 | 0.644 |
+| SciFact | Hybrid (all-MiniLM-L6-v2 + BM25) | 0.704 | 0.855 | 0.955 | 0.657 |
+| SciFact | Vector (text-embedding-3-small) | 0.723 | 0.852 | 0.970 | 0.690 |
+| SciFact | Hybrid (text-embedding-3-small + `ts_rank`) | 0.716 | 0.816 | 0.967 | 0.697 |
 | FiQA | Full-text (`ts_rank`) | 0.188 | 0.242 | 0.473 | 0.238 |
-| FiQA | **Vector** (all-MiniLM-L6-v2) | **0.366** | **0.427** | **0.694** | **0.443** |
-| FiQA | Hybrid (all-MiniLM-L6-v2 + full-text) | 0.330 | 0.416 | 0.680 | 0.395 |
-| FiQA | **Vector** (text-embedding-3-small) | **0.449** | **0.524** | **0.775** | **0.520** |
-| FiQA | Hybrid (text-embedding-3-small + full-text) | 0.348 | 0.432 | 0.733 | 0.414 |
+| FiQA | Full-text (BM25) | 0.254 | 0.314 | 0.547 | 0.313 |
+| FiQA | Vector (all-MiniLM-L6-v2) | 0.366 | 0.427 | 0.694 | 0.443 |
+| FiQA | Hybrid (all-MiniLM-L6-v2 + `ts_rank`) | 0.330 | 0.416 | 0.680 | 0.395 |
+| FiQA | Hybrid (all-MiniLM-L6-v2 + BM25) | 0.366 | 0.445 | 0.700 | 0.439 |
+| FiQA | Vector (text-embedding-3-small) | 0.449 | 0.524 | 0.775 | 0.520 |
+| FiQA | Hybrid (text-embedding-3-small + `ts_rank`) | 0.348 | 0.432 | 0.733 | 0.414 |
+
+`text-embedding-3-small` with BM25 has not been run yet.
 
 What it shows:
 
-- **Hybrid helps when the two retrievers are comparably strong.** On SciFact, full-text (0.597) is close to MiniLM (0.624), and fusing them beats both, and BM25's published 0.665.
-- **It hurts when one is much weaker.** On FiQA, full-text reaches 0.188 against 0.449 for `text-embedding-3-small`, and equal-weight fusion drags the result down to 0.348.
-- **A lower full-text weight recovers it, at a cost.** Sweeping `ragkit.hybrid.fulltext-weight` with MiniLM (nDCG@10):
+- **Hybrid helps when the two retrievers are comparably strong.** On SciFact, full-text and MiniLM are close, and fusing them beats both: 0.678 with `ts_rank`, 0.704 with BM25.
+- **It hurts when one is much weaker.** On FiQA, `ts_rank` reaches 0.188 against 0.449 for `text-embedding-3-small`, and equal-weight fusion drags the result down to 0.348.
+- **BM25 closes most of that gap.** It scores 0.691 on SciFact and 0.254 on FiQA (BEIR reports 0.665 and 0.236 for its BM25 baseline). With it, MiniLM hybrid on FiQA no longer loses to vector alone (0.366 either way, with higher recall), and on SciFact it is the best MiniLM result.
+- **With `ts_rank`, a lower full-text weight recovers FiQA, at a cost.** Sweeping `ragkit.hybrid.fulltext-weight` with MiniLM (nDCG@10):
 
   | fulltext-weight | 1.0 (default) | 0.7 | 0.5 | 0.3 | 0.1 | vector only |
   | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -128,7 +135,7 @@ What it shows:
   | FiQA | 0.330 | 0.343 | 0.353 | 0.363 | **0.368** | 0.366 |
 
   The cost: a document found only by full-text scores at most `w / 61`, so it can only enter the top `n` if `w > 61 / (60 + n)` — above 0.38 for the top 100 here, and above 0.94 for the starter's default `top-k: 5`. Below that, hybrid just re-orders the vector results (Recall@100 equals vector-only at 0.3 and below) and gives up the exact-token matches vector search misses, which BEIR's natural-language queries don't test. The default stays 1.0; check a lower weight against your own queries with `rag-kit-eval`.
-- **PostgreSQL's built-in ranking gets most of the way to BM25.** BEIR reports BM25 at 0.665 (SciFact) and 0.236 (FiQA); `ts_rank` with log-length normalisation reaches 0.597 and 0.188. The cover-density `ts_rank_cd` reached only 0.33 and 0.03 on the same queries, which is why the retriever uses `ts_rank`.
+- **Without the extension, `ts_rank` still gets most of the way to BM25** (0.597 vs 0.691, 0.188 vs 0.254). The cover-density `ts_rank_cd` reached only 0.33 and 0.03 on the same queries, which is why the retriever uses `ts_rank`.
 
 Setup: vector search is exact (no ANN index), so numbers reflect the model, not index recall. MiniLM runs locally through `spring-ai-transformers` with Spring AI's default 128-token truncation. Reproduce with:
 

@@ -12,8 +12,9 @@ import io.github.derekdiliu.ragkit.eval.EvalReport;
 import io.github.derekdiliu.ragkit.eval.Metric;
 import io.github.derekdiliu.ragkit.eval.RetrievalEvaluator;
 import io.github.derekdiliu.ragkit.pgvector.PgFullTextDocumentRetriever;
+import io.github.derekdiliu.ragkit.pgvector.PgTextSearchContainers;
+import io.github.derekdiliu.ragkit.pgvector.TextRanking;
 import io.github.derekdiliu.ragkit.retrieval.HybridDocumentRetriever;
-import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import org.springframework.ai.document.Document;
 import org.springframework.ai.document.MetadataMode;
@@ -27,8 +28,9 @@ import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
- * Compares full-text, vector and hybrid retrieval on BEIR test splits, all on the same
- * PgVectorStore table in a throwaway pgvector container.
+ * Compares full-text ({@code ts_rank} and BM25), vector and hybrid retrieval on BEIR test
+ * splits, all on the same PgVectorStore table in a throwaway container with pgvector and
+ * pg_textsearch.
  * <p>
  * System properties: {@code benchmark.datasets} (default {@code scifact,fiqa}),
  * {@code benchmark.models} ({@code minilm} and/or {@code openai}; default {@code minilm};
@@ -56,7 +58,7 @@ public final class BeirBenchmark {
 			.append("| Dataset | Retriever | nDCG@10 | Recall@10 | Recall@100 | MRR@10 |\n")
 			.append("| --- | --- | ---: | ---: | ---: | ---: |\n");
 
-		try (var postgres = new PostgreSQLContainer("pgvector/pgvector:pg17")) {
+		try (var postgres = PgTextSearchContainers.create()) {
 			postgres.start();
 			try (var dataSource = new HikariDataSource()) {
 				dataSource.setJdbcUrl(postgres.getJdbcUrl());
@@ -86,19 +88,32 @@ public final class BeirBenchmark {
 							.topK(DEPTH)
 							.build();
 						fullText.initializeSchema();
+						var bm25 = PgFullTextDocumentRetriever.builder(jdbcTemplate)
+							.tableName(table)
+							.ranking(TextRanking.BM25)
+							.topK(DEPTH)
+							.build();
+						bm25.initializeSchema();
 						var vector = VectorStoreDocumentRetriever.builder().vectorStore(vectorStore).topK(DEPTH).build();
 						var hybrid = HybridDocumentRetriever.builder()
 							.retriever("vector", vector)
 							.retriever("fulltext", fullText)
 							.topK(DEPTH)
 							.build();
+						var hybridBm25 = HybridDocumentRetriever.builder()
+							.retriever("vector", vector)
+							.retriever("fulltext", bm25)
+							.topK(DEPTH)
+							.build();
 
 						if (!fullTextReported) {
 							results.append(row(dataset, "Full-text (`ts_rank`)", fullText));
+							results.append(row(dataset, "Full-text (BM25)", bm25));
 							fullTextReported = true;
 						}
 						results.append(row(dataset, "Vector (" + label(model) + ")", vector));
-						results.append(row(dataset, "Hybrid RRF (" + label(model) + " + full-text)", hybrid));
+						results.append(row(dataset, "Hybrid RRF (" + label(model) + " + `ts_rank`)", hybrid));
+						results.append(row(dataset, "Hybrid RRF (" + label(model) + " + BM25)", hybridBm25));
 					}
 				}
 			}
