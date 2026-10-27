@@ -14,6 +14,8 @@ import io.github.derekdiliu.ragkit.eval.RetrievalEvaluator;
 import io.github.derekdiliu.ragkit.pgvector.PgFullTextDocumentRetriever;
 import io.github.derekdiliu.ragkit.pgvector.PgTextSearchContainers;
 import io.github.derekdiliu.ragkit.pgvector.TextRanking;
+import io.github.derekdiliu.ragkit.rerank.RerankingDocumentPostProcessor;
+import io.github.derekdiliu.ragkit.rerank.onnx.OnnxCrossEncoder;
 import io.github.derekdiliu.ragkit.retrieval.HybridDocumentRetriever;
 
 import org.springframework.ai.document.Document;
@@ -39,6 +41,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * <p>
  * Every retriever returns its top {@value #DEPTH}. The vector table has no ANN index, so
  * vector search is exact and the numbers reflect the embedding model, not index recall.
+ * Reranked rows re-order those {@value #DEPTH} with the default {@link OnnxCrossEncoder},
+ * as BEIR's BM25+CE baseline does.
  */
 public final class BeirBenchmark {
 
@@ -58,8 +62,9 @@ public final class BeirBenchmark {
 			.append("| Dataset | Retriever | nDCG@10 | Recall@10 | Recall@100 | MRR@10 |\n")
 			.append("| --- | --- | ---: | ---: | ---: | ---: |\n");
 
-		try (var postgres = PgTextSearchContainers.create()) {
+		try (var postgres = PgTextSearchContainers.create(); var crossEncoder = OnnxCrossEncoder.create()) {
 			postgres.start();
+			var reranker = RerankingDocumentPostProcessor.builder(crossEncoder).topN(DEPTH).build();
 			try (var dataSource = new HikariDataSource()) {
 				dataSource.setJdbcUrl(postgres.getJdbcUrl());
 				dataSource.setUsername(postgres.getUsername());
@@ -109,11 +114,14 @@ public final class BeirBenchmark {
 						if (!fullTextReported) {
 							results.append(row(dataset, "Full-text (`ts_rank`)", fullText));
 							results.append(row(dataset, "Full-text (BM25)", bm25));
+							results.append(row(dataset, "BM25 + reranker", reranked(bm25, reranker)));
 							fullTextReported = true;
 						}
 						results.append(row(dataset, "Vector (" + label(model) + ")", vector));
 						results.append(row(dataset, "Hybrid RRF (" + label(model) + " + `ts_rank`)", hybrid));
 						results.append(row(dataset, "Hybrid RRF (" + label(model) + " + BM25)", hybridBm25));
+						results.append(row(dataset, "Hybrid RRF (" + label(model) + " + BM25) + reranker",
+								reranked(hybridBm25, reranker)));
 					}
 				}
 			}
@@ -143,6 +151,10 @@ public final class BeirBenchmark {
 				.build();
 		}
 		throw new IllegalArgumentException("Unknown model " + model + "; use minilm or openai");
+	}
+
+	private static DocumentRetriever reranked(DocumentRetriever retriever, RerankingDocumentPostProcessor reranker) {
+		return query -> reranker.process(query, retriever.retrieve(query));
 	}
 
 	private static String label(String model) {

@@ -25,6 +25,7 @@
         <module>rag-kit-pgvector</module>
         <module>rag-kit-spring-boot-starter</module>
         <module>rag-kit-eval</module>
+        <module>rag-kit-rerank-onnx</module>
     </modules>
 
     <properties>
@@ -34,6 +35,9 @@
 
         <spring-ai.version>2.0.2</spring-ai.version>
         <spring-boot.version>4.1.2</spring-boot.version>
+        <!-- Same versions as spring-ai-transformers, so both can share a classpath -->
+        <onnxruntime.version>1.21.1</onnxruntime.version>
+        <djl.version>0.36.0</djl.version>
 
         <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
         <maven-surefire-plugin.version>3.5.3</maven-surefire-plugin.version>
@@ -78,6 +82,21 @@
                 <groupId>io.github.derekdiliu</groupId>
                 <artifactId>rag-kit-eval</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.derekdiliu</groupId>
+                <artifactId>rag-kit-rerank-onnx</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.microsoft.onnxruntime</groupId>
+                <artifactId>onnxruntime</artifactId>
+                <version>${onnxruntime.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ai.djl.huggingface</groupId>
+                <artifactId>tokenizers</artifactId>
+                <version>${djl.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

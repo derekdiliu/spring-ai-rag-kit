@@ -19,5 +19,10 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: maven
+      # The reranker integration test downloads a ~90 MB model, pinned by revision.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ragkit/models
+          key: ragkit-models-ms-marco-MiniLM-L6-v2-233902d2
       # Docker is available on ubuntu-latest, so the Testcontainers integration tests run here.
       - run: mvn -B verify

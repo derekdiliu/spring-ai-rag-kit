@@ -18,6 +18,7 @@ Spring AI 2.0's modular RAG defines the right extension points, but ships few im
 | `DocumentRetriever` | `VectorStoreDocumentRetriever` only | `PgFullTextDocumentRetriever`, `HybridDocumentRetriever` |
 | `DocumentJoiner` | `ConcatenationDocumentJoiner` (sorts by raw score) | `RankFusionDocumentJoiner` (RRF) |
 | `RetrievalAugmentationAdvisor` | accepts **one** retriever | `HybridDocumentRetriever` *is* one retriever wrapping many |
+| `DocumentPostProcessor` | the interface only | `RerankingDocumentPostProcessor`, with a local cross-encoder |
 
 Vector search misses exact tokens — method names, error codes, SKUs, acronyms. Full-text search misses paraphrase. Hybrid retrieval can cover both, and RRF merges them using ranks only, so cosine similarities and `ts_rank` scores never need to be put on the same scale. Whether it helps depends on your data — see the [benchmark](#benchmark), and measure your own with `rag-kit-eval`.
 
@@ -28,6 +29,7 @@ Vector search misses exact tokens — method names, error codes, SKUs, acronyms.
 - `RankFusion.weightedScore()` — weighted sum of min-max normalised scores
 - `HybridDocumentRetriever` — runs delegates in parallel (on virtual threads on Java 21+), fuses, applies `topK`
 - `RankFusionDocumentJoiner` — drop-in replacement for `ConcatenationDocumentJoiner` when using query expansion
+- `RerankingDocumentPostProcessor` — re-orders retrieved documents by any `RelevanceScorer` and keeps the top `n`; the score is also stored as `ragkit_rerank_score`
 
 Every fused document carries `ragkit_fusion_score` and `ragkit_source_ranks` (e.g. `{vector=3, fulltext=1}`) in its metadata, so you can see *why* it ranked where it did.
 
@@ -62,6 +64,18 @@ void retrievalQuality(@EvalDataset("classpath:eval/questions.jsonl") List<EvalCa
 ```json
 {"id": "q1", "query": "How do I reset my password?", "relevant": ["doc-12", "doc-40"]}
 {"id": "q2", "query": "Refund after 30 days", "relevant": {"doc-7": 2, "doc-9": 1}}
+```
+
+**`rag-kit-rerank-onnx`** — `OnnxCrossEncoder`, a `RelevanceScorer` that runs a cross-encoder in-process with ONNX Runtime; no Python, no API key
+- Defaults to [`cross-encoder/ms-marco-MiniLM-L6-v2`](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2) (Apache 2.0), downloaded once (~90 MB) from a pinned revision, checked against its SHA-256 and cached in `~/.cache/ragkit/models`
+- Other BERT-style cross-encoders exported to ONNX load with `.modelFiles(model, tokenizer)`
+
+```java
+var crossEncoder = OnnxCrossEncoder.create();   // AutoCloseable; make it a bean and share it
+var advisor = RetrievalAugmentationAdvisor.builder()
+    .documentRetriever(hybrid)                   // retrieve 20–50 candidates
+    .documentPostProcessors(RerankingDocumentPostProcessor.builder(crossEncoder).topN(5).build())
+    .build();
 ```
 
 ## Quick start
@@ -101,22 +115,26 @@ var hybrid = HybridDocumentRetriever.builder()
 
 ## Benchmark
 
-BEIR test splits, all retrievers on the same `PgVectorStore` table. Every retriever returns its top 100; hybrid is equal-weight RRF (`k = 60`) over vector and full-text.
+BEIR test splits, all retrievers on the same `PgVectorStore` table. Every retriever returns its top 100; hybrid is equal-weight RRF (`k = 60`) over vector and full-text. "+ reranker" re-orders those 100 with `OnnxCrossEncoder` (ms-marco-MiniLM-L6-v2).
 
 | Dataset | Retriever | nDCG@10 | Recall@10 | Recall@100 | MRR@10 |
 | --- | --- | ---: | ---: | ---: | ---: |
 | SciFact | Full-text (`ts_rank`) | 0.597 | 0.742 | 0.862 | 0.556 |
 | SciFact | Full-text (BM25) | 0.691 | 0.814 | 0.926 | 0.658 |
+| SciFact | BM25 + reranker | 0.692 | 0.817 | 0.926 | 0.661 |
 | SciFact | Vector (all-MiniLM-L6-v2) | 0.624 | 0.774 | 0.923 | 0.578 |
 | SciFact | Hybrid (all-MiniLM-L6-v2 + `ts_rank`) | 0.678 | 0.797 | 0.939 | 0.644 |
 | SciFact | Hybrid (all-MiniLM-L6-v2 + BM25) | 0.704 | 0.855 | 0.955 | 0.657 |
+| SciFact | Hybrid (all-MiniLM-L6-v2 + BM25) + reranker | 0.690 | 0.816 | 0.955 | 0.658 |
 | SciFact | Vector (text-embedding-3-small) | 0.723 | 0.852 | 0.970 | 0.690 |
 | SciFact | Hybrid (text-embedding-3-small + `ts_rank`) | 0.716 | 0.816 | 0.967 | 0.697 |
 | FiQA | Full-text (`ts_rank`) | 0.188 | 0.242 | 0.473 | 0.238 |
 | FiQA | Full-text (BM25) | 0.254 | 0.314 | 0.547 | 0.313 |
+| FiQA | BM25 + reranker | 0.348 | 0.413 | 0.547 | 0.422 |
 | FiQA | Vector (all-MiniLM-L6-v2) | 0.366 | 0.427 | 0.694 | 0.443 |
 | FiQA | Hybrid (all-MiniLM-L6-v2 + `ts_rank`) | 0.330 | 0.416 | 0.680 | 0.395 |
 | FiQA | Hybrid (all-MiniLM-L6-v2 + BM25) | 0.366 | 0.445 | 0.700 | 0.439 |
+| FiQA | Hybrid (all-MiniLM-L6-v2 + BM25) + reranker | 0.370 | 0.448 | 0.700 | 0.441 |
 | FiQA | Vector (text-embedding-3-small) | 0.449 | 0.524 | 0.775 | 0.520 |
 | FiQA | Hybrid (text-embedding-3-small + `ts_rank`) | 0.348 | 0.432 | 0.733 | 0.414 |
 
@@ -135,6 +153,7 @@ What it shows:
   | FiQA | 0.330 | 0.343 | 0.353 | 0.363 | **0.368** | 0.366 |
 
   The cost: a document found only by full-text scores at most `w / 61`, so it can only enter the top `n` if `w > 61 / (60 + n)` — above 0.38 for the top 100 here, and above 0.94 for the starter's default `top-k: 5`. Below that, hybrid just re-orders the vector results (Recall@100 equals vector-only at 0.3 and below) and gives up the exact-token matches vector search misses, which BEIR's natural-language queries don't test. The default stays 1.0; check a lower weight against your own queries with `rag-kit-eval`.
+- **The default reranker lifts a weak first stage, not a good one.** It takes BM25 from 0.254 to 0.348 on FiQA, matching BEIR's BM25 + cross-encoder result (0.347), but on SciFact BM25 is already at the model's level (0.692 vs BEIR's 0.688). After MiniLM + BM25 hybrid it adds 0.004 on FiQA and costs 0.014 on SciFact: whatever the candidates, this 22M-parameter cross-encoder lands near its own ceiling. Worth it in front of full-text-only retrieval; with hybrid, measure first, or plug a stronger model into `RelevanceScorer`.
 - **Without the extension, `ts_rank` still gets most of the way to BM25** (0.597 vs 0.691, 0.188 vs 0.254). The cover-density `ts_rank_cd` reached only 0.33 and 0.03 on the same queries, which is why the retriever uses `ts_rank`.
 
 Setup: vector search is exact (no ANN index), so numbers reflect the model, not index recall. MiniLM runs locally through `spring-ai-transformers` with Spring AI's default 128-token truncation. Reproduce with:
@@ -153,6 +172,7 @@ Java 17+ (virtual threads on 21+) · Spring AI 2.0.x · Spring Boot 4.1.x · Pos
 - `initializeSchema()` adds a **stored** generated column, which rewrites the table once. On large tables run it in a maintenance window. Set `useStoredTsvector(false)` to try the retriever with no schema change (sequential scan).
 - The query `tsquery` is built in a fenced one-row subquery (`OFFSET 0`). Without the fence PostgreSQL inlines it and ignores the GIN index — measured at 45 ms vs 0.5 ms on 20k rows.
 - `ts_rank` is not BM25: it has no inverse document frequency, so common query words weigh as much as rare ones. Use BM25 ranking where you can install `pg_textsearch`.
+- Reranking runs the model once per candidate. On an Apple M4 (CPU only) `OnnxCrossEncoder` scores about 30 query–passage pairs per second at ~350 tokens per passage, so 50 candidates add about 1.5 s per query; shorter chunks are faster. The benchmark, with PostgreSQL on the same machine, averaged about 15 pairs per second. Keep the candidate count small, or plug a hosted reranking API into `RelevanceScorer`.
 - Chinese text needs a segmentation extension (e.g. `zhparser`) and a matching text search configuration.
 
 ## Build
@@ -171,7 +191,7 @@ Integration tests are skipped automatically when Docker is not available.
 - [x] PostgreSQL full-text retriever with identifier splitting and shared filters
 - [x] Spring Boot auto-configuration
 - [x] `rag-kit-eval`: Recall@k, MRR, nDCG, hit rate; JUnit 5 support for RAG regression tests in CI
-- [ ] Rerankers as `DocumentPostProcessor` (Spring AI ships none)
+- [x] Rerankers as `DocumentPostProcessor` (Spring AI ships none)
 - [x] BM25 ranking via `pg_textsearch`
 - [x] Benchmark on BEIR (SciFact, FiQA): vector vs full-text vs hybrid
 - [ ] Publish to Maven Central
