@@ -117,7 +117,15 @@ BEIR test splits, all three retrievers on the same `PgVectorStore` table. Every 
 What it shows:
 
 - **Hybrid helps when the two retrievers are comparably strong.** On SciFact, full-text (0.597) is close to MiniLM (0.624), and fusing them beats both, and BM25's published 0.665.
-- **It hurts when one is much weaker.** On FiQA, full-text reaches 0.188 against 0.449 for `text-embedding-3-small`, and equal-weight fusion drags the result down to 0.348. Try a lower `ragkit.hybrid.fulltext-weight` (not benchmarked here), or use the vector retriever alone.
+- **It hurts when one is much weaker.** On FiQA, full-text reaches 0.188 against 0.449 for `text-embedding-3-small`, and equal-weight fusion drags the result down to 0.348.
+- **A lower full-text weight recovers it, at a cost.** Sweeping `ragkit.hybrid.fulltext-weight` with MiniLM (nDCG@10):
+
+  | fulltext-weight | 1.0 (default) | 0.7 | 0.5 | 0.3 | 0.1 | vector only |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | SciFact | 0.678 | **0.683** | 0.678 | 0.676 | 0.661 | 0.624 |
+  | FiQA | 0.330 | 0.343 | 0.353 | 0.363 | **0.368** | 0.366 |
+
+  The cost: a document found only by full-text scores at most `w / 61`, so it can only enter the top `n` if `w > 61 / (60 + n)` — above 0.38 for the top 100 here, and above 0.94 for the starter's default `top-k: 5`. Below that, hybrid just re-orders the vector results (Recall@100 equals vector-only at 0.3 and below) and gives up the exact-token matches vector search misses, which BEIR's natural-language queries don't test. The default stays 1.0; check a lower weight against your own queries with `rag-kit-eval`.
 - **PostgreSQL's built-in ranking gets most of the way to BM25.** BEIR reports BM25 at 0.665 (SciFact) and 0.236 (FiQA); `ts_rank` with log-length normalisation reaches 0.597 and 0.188. The cover-density `ts_rank_cd` reached only 0.33 and 0.03 on the same queries, which is why the retriever uses `ts_rank`.
 
 Setup: vector search is exact (no ANN index), so numbers reflect the model, not index recall. MiniLM runs locally through `spring-ai-transformers` with Spring AI's default 128-token truncation. Reproduce with:
