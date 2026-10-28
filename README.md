@@ -1,5 +1,8 @@
 # Spring AI RAG Kit
 
+[![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fio%2Fgithub%2Fderekdiliu%2Frag-kit-spring-boot-starter%2Fmaven-metadata.xml&label=Maven%20Central)](https://central.sonatype.com/namespace/io.github.derekdiliu)
+[![CI](https://github.com/derekdiliu/spring-ai-rag-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/derekdiliu/spring-ai-rag-kit/actions/workflows/ci.yml)
+
 Hybrid retrieval for [Spring AI](https://github.com/spring-projects/spring-ai): vector similarity **plus** PostgreSQL full-text search, merged with Reciprocal Rank Fusion, on the table `PgVectorStore` already writes. No second datastore, no Elasticsearch, no data duplication.
 
 ```java
