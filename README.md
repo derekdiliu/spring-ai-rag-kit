@@ -84,7 +84,7 @@ var advisor = RetrievalAugmentationAdvisor.builder()
 <dependency>
     <groupId>io.github.derekdiliu</groupId>
     <artifactId>rag-kit-spring-boot-starter</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
 </dependency>
 ```
 
